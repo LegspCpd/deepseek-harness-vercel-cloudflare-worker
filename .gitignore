@@ -13,6 +13,10 @@ dist/
 *.tsbuildinfo
 .coverage/
 
+# Python
+__pycache__/
+*.pyc
+
 # Logs
 *.log
 
