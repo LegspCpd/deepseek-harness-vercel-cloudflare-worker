@@ -2,8 +2,9 @@
  * Hugging Face free-sandbox adapter.
  *
  * The engine never runs local subprocesses. Instead it forwards Bash / Python /
- * filesystem tool calls over HTTP to a self-hosted Hugging Face Space (Docker)
- * sandbox. This keeps the stack 100% free and card-free, replacing E2B.
+ * filesystem tool calls over HTTP to a self-hosted Hugging Face Space
+ * (Gradio / Python mode — free, no billing) sandbox. This keeps the stack
+ * 100% free and card-free, replacing E2B.
  *
  * Security posture (guardrails 2 & 5):
  *  - The sandbox URL and shared secret come from the Worker `env` at runtime;

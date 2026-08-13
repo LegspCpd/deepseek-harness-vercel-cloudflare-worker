@@ -7,17 +7,17 @@
 | 前端 UI | 聊天界面 + 用户引导 | Vercel |
 | 引擎 Engine | Agent 核心、路由、SSE 流式响应 | Cloudflare Workers |
 | 数据库 DB | 用户 / 会话 / 消息 / 插件配置 | Neon PostgreSQL |
-| 沙箱 Sandbox | Bash / Python / 文件系统执行 | **Hugging Face 免费 Docker Space** |
+| 沙箱 Sandbox | Bash / Python / 文件系统执行 | **Hugging Face 免费 Gradio/Python Space** |
 
 ```
 浏览器 → Vercel 前端 ──SSE──▶ Cloudflare Worker（Hono 引擎，持全部密钥）
                                   │
                                   ├──▶ Neon PostgreSQL（Drizzle ORM，user_id 隔离）
-                                  ├──▶ Hugging Face 免费沙箱（命令/代码执行，HTTP）
+                                  ├──▶ Hugging Face 免费 Gradio 沙箱（命令/代码执行，HTTP）
                                   └──▶ DeepSeek API（大模型）
 ```
 
-> **为什么不用 E2B**：E2B 需要绑定信用卡验证。本项目把代码沙箱外包给 **Hugging Face Spaces（Docker 模式）** 自建的免费 API，完全免费且无需银行卡。
+> **为什么不用 E2B / Docker**：E2B 和 HF 的 Docker 模式都需要绑定信用卡/Billing。本项目把代码沙箱外包给 **Hugging Face Spaces（Gradio/Python 免费模式）** 自建的 API，完全免费、零绑卡、零银行卡门槛。
 
 > **安全原则（5 条护栏贯穿全程）**：
 > 1. **数据隔离**：所有数据按 `user_id` 归属，数据库层强制 `WHERE ... AND user_id = ?`，杜绝越权访问（BOLA/IDOR）。
@@ -41,9 +41,11 @@ git --version
 
 ---
 
-## 第 1 步：部署 Hugging Face 免费沙箱（Docker）
+## 第 1 步：部署 Hugging Face 免费沙箱（Gradio/Python 模式）
 
-> 这是替代 E2B 的核心。我们在 Hugging Face 上部署一个 Docker 沙箱服务，它通过 HTTP 接收并执行 Bash / Python / 文件系统操作。
+> 这是替代 E2B 的核心。我们在 Hugging Face 上部署一个 **Gradio / Python 模式**（免费、零绑卡）的沙箱服务，它通过 HTTP 接收并执行 Bash / Python / 文件系统操作。
+>
+> ⚠️ **避开绑卡**：HF 的 **Docker** 模式需要绑定 Billing 账户；**Gradio / Python** 模式完全免费、无需绑卡。我们使用后者。
 
 ### 1.1 新建 Space
 
@@ -52,35 +54,34 @@ git --version
    - **Owner**：你的账号
    - **Space name**：例如 `dsh-sandbox`
    - **License**：MIT
-   - **SDK**：选 **Docker**
+   - **SDK**：选 **Gradio**
 3. 点击 **Create Space**。
 
 ### 1.2 上传沙箱代码
 
-创建成功后，Space 会生成一个 Git 仓库。把 `apps/serverless-worker/sandbox-hf/` 目录下的 **3 个文件**推送到这个 Space 仓库：
+创建成功后，Space 会生成一个 Git 仓库。把 `apps/serverless-worker/sandbox-hf/` 目录下的 **2 个文件**推送到这个 Space 仓库：
 
 - `app.py`
 - `requirements.txt`
-- `Dockerfile`
 
 推送方式（在沙箱代码目录内）：
 ```sh
 cd apps/serverless-worker/sandbox-hf
 git init
-git add app.py requirements.txt Dockerfile
+git add app.py requirements.txt
 git commit -m "sandbox"
 # 关联你的 Space 仓库（替换为你的实际地址）
 git remote add origin https://huggingface.co/spaces/<你的用户名>/dsh-sandbox
 git push -u origin main
 ```
 
-### 1.3 配置密钥并等待构建
+### 1.3 配置密钥并等待启动
 
 1. 回到 Space 页面，进入 **Settings → Variables and secrets**。
 2. 添加一个 **Secret**：
    - Key：`SANDBOX_SECRET`
    - Value：一串随机的长字符串（例如 `openssl rand -hex 32` 的输出）
-3. Space 会自动构建 Docker 镜像。等状态变为 **Running**。
+3. Space 会自动安装 `requirements.txt` 依赖并启动。等状态变为 **Running**。
 
 ### 1.4 获取沙箱公网地址
 
@@ -88,7 +89,7 @@ Space 运行后，公网地址形如：
 ```
 https://<你的用户名>-dsh-sandbox.hf.space
 ```
-访问该地址的 `/health`，看到 `{"ok":true,...}` 即沙箱就绪。**记下这个地址**，第 2 步会用。
+访问该地址应看到一个 Gradio 测试界面；访问 `/health` 看到 `{"ok":true,...}` 即沙箱就绪。**记下这个地址**，第 2 步会用。
 
 ---
 
@@ -312,7 +313,7 @@ cd apps/serverless-worker && npx wrangler deploy   # Worker
 
 ## 本地全栈联调（开发者）
 
-1. **沙箱**：`cd apps/serverless-worker/sandbox-hf && pip install -r requirements.txt && SANDBOX_SECRET=dev uvicorn app:app --port 7860`
+1. **沙箱**：`cd apps/serverless-worker/sandbox-hf && pip install -r requirements.txt && SANDBOX_SECRET=dev python app.py`（Gradio 默认监听 `$PORT` 或 7860）
 2. **引擎**：`cd apps/serverless-worker && pnpm wrangler dev`
 3. **前端**：`cd apps/web/vercel && pnpm dev`（本地地址 `http://localhost:5173`）
 
