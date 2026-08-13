@@ -6,8 +6,8 @@
  *   2. Stream a completion from the DeepSeek API.
  *   3. Stream `text` frames as tokens arrive.
  *   4. If the model issues tool calls, dispatch each via the router
- *      (local API tools or E2B sandbox), emit `tool` frames, persist the
- *      tool messages, then loop back for the follow-up completion.
+ *      (local API tools or the Hugging Face free sandbox), emit `tool` frames,
+ *      persist the tool messages, then loop back for the follow-up completion.
  *   5. Persist the user and assistant messages to Neon.
  *
  * Every async boundary is try/caught by the caller in `sse.ts`; this module
@@ -24,7 +24,6 @@ import type { Env } from '../types/env.ts'
 import type { ChatRequest } from '../types/agent.ts'
 import type { ToolDefinition } from '../types/tools.ts'
 import { dispatchTool, llmFunctionDeclarations, resolveToolDefinitions } from './router.ts'
-import { E2BSandboxPool } from '../adapters/e2b.ts'
 
 /** A tool invocation parsed out of an assistant message. */
 interface ParsedToolCall {
@@ -36,17 +35,11 @@ interface ParsedToolCall {
 /** Maximum tool-call iterations in one turn before giving up. */
 const MAX_TOOL_ITERATIONS = 8
 
-/** A shared, per-turn sandbox pool. */
-interface TurnSandbox {
-  readonly pool: E2BSandboxPool
-  readonly dispose: () => Promise<void>
-}
-
 /**
  * Run a single agent turn and stream SSE frames.
  * @param request - The validated chat turn with a resolved session id.
  * @param db - The Drizzle client for persistence.
- * @param env - Worker environment holding LLM/E2B secrets.
+ * @param env - Worker environment holding LLM/HF-sandbox secrets.
  * @param sink - SSE sink for `text` and `tool` frames.
  */
 /** A chat turn with a fully-resolved session id and owner. */
@@ -61,62 +54,40 @@ export async function runAgentTurn(
   env: Env,
   sink: SseSink,
 ): Promise<void> {
-  const sandbox = await openSandbox(env)
-  try {
-    const transcript = await loadSessionMessages(db, request.userId, request.sessionId)
-    const definitions = resolveToolDefinitions(request.tools)
-    const messages = buildMessages(transcript, request.prompt, request.systemPrompt, definitions)
+  const transcript = await loadSessionMessages(db, request.userId, request.sessionId)
+  const definitions = resolveToolDefinitions(request.tools)
+  const messages = buildMessages(transcript, request.prompt, request.systemPrompt, definitions)
 
-    await appendMessage(db, request.userId, request.sessionId, 'user', { type: 'text', text: request.prompt })
+  await appendMessage(db, request.userId, request.sessionId, 'user', { type: 'text', text: request.prompt })
 
-    for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
-      const assistant = await streamCompletion(request, db, env, messages, definitions, sink, sandbox.pool)
-      if (assistant === undefined) break
-      // Push the assistant turn into the loop with its tool_calls intact.
-      messages.push(assistant.message)
+  for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
+    const assistant = await streamCompletion(request, db, env, messages, definitions, sink)
+    if (assistant === undefined) break
+    // Push the assistant turn into the loop with its tool_calls intact.
+    messages.push(assistant.message)
 
-      if (assistant.toolCalls.length === 0) break
+    if (assistant.toolCalls.length === 0) break
 
-      for (const call of assistant.toolCalls) {
-        const result = await dispatchTool({ name: call.name, args: call.arguments }, definitions, request.sessionId, env, sandbox.pool)
-        await sink.tool({
-          name: call.name,
-          args: call.arguments,
-          result: result.detail,
-          ...(result.error !== undefined ? { error: result.error } : {}),
-        })
-        await appendMessage(db, request.userId, request.sessionId, 'tool', {
-          tool_call_id: call.id,
-          name: call.name,
-          output: result.output,
-        })
-        messages.push({
-          role: 'tool',
-          content: result.output,
-          tool_call_id: call.id,
-        })
-      }
+    for (const call of assistant.toolCalls) {
+      const result = await dispatchTool({ name: call.name, args: call.arguments }, definitions, request.sessionId, env)
+      await sink.tool({
+        name: call.name,
+        args: call.arguments,
+        result: result.detail,
+        ...(result.error !== undefined ? { error: result.error } : {}),
+      })
+      await appendMessage(db, request.userId, request.sessionId, 'tool', {
+        tool_call_id: call.id,
+        name: call.name,
+        output: result.output,
+      })
+      messages.push({
+        role: 'tool',
+        content: result.output,
+        tool_call_id: call.id,
+      })
     }
-  } finally {
-    await sandbox.dispose()
   }
-}
-
-/** Open the per-turn E2B sandbox pool. */
-async function openSandbox(env: Env): Promise<TurnSandbox> {
-  const pool = new E2BSandboxPool(env.E2B_API_KEY, parseSandboxTimeout(env.E2B_SANDBOX_TIMEOUT_MS))
-  return {
-    pool,
-    dispose: () => pool.dispose(),
-  }
-}
-
-/** Parse the sandbox lifetime env var into a bounded integer. */
-function parseSandboxTimeout(raw: string | undefined): number {
-  if (raw === undefined) return 300_000
-  const parsed = Number(raw)
-  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > 3_600_000) return 300_000
-  return parsed
 }
 
 /** Build the model message array from transcript + current prompt. */
@@ -167,7 +138,6 @@ async function streamCompletion(
   messages: readonly DeepSeekMessage[],
   definitions: readonly ToolDefinition[],
   sink: SseSink,
-  pool: E2BSandboxPool,
 ): Promise<{ message: DeepSeekMessage; toolCalls: ParsedToolCall[] } | undefined> {
   const url = `${env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com'}/chat/completions`
   const response = await fetch(url, {

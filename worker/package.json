@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-serverless-worker",
-  "description": "Cloudflare Workers engine for the Serverless DeepSeek Harness: Hono routing, SSE streaming, Drizzle/Neon persistence, and E2B sandbox forwarding with per-user data isolation.",
-  "version": "0.2.0",
+  "description": "Cloudflare Workers engine for the Serverless DeepSeek Harness: Hono routing, SSE streaming, Drizzle/Neon persistence, and a free Hugging Face sandbox adapter with per-user data isolation.",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -17,7 +17,6 @@
     "@hono/zod-validator": "^0.4.2",
     "@neondatabase/serverless": "^0.10.4",
     "drizzle-orm": "^0.44.4",
-    "e2b": "2.29.1",
     "hono": "^4.13.0",
     "zod": "^3.23.8"
   },

@@ -25,7 +25,7 @@ export interface ToolDefinition {
 /** The runtime context an adapter needs to execute a tool. */
 export interface AdapterContext {
   readonly sessionId: string
-  /** A stable working directory inside the E2B sandbox. */
+  /** A stable working directory inside the sandbox. */
   readonly cwd: string
 }
 

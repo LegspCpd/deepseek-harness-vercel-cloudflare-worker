@@ -6,7 +6,8 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "vars": {
-    "ALLOWED_ORIGIN": "https://dsh-ui.vercel.app"
+    "ALLOWED_ORIGIN": "https://dsh-ui.vercel.app",
+    "HF_SANDBOX_URL": "https://LegspCpd-dsh-sandbox.hf.space"
   },
   "observability": {
     "enabled": true

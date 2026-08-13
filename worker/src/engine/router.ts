@@ -4,11 +4,13 @@
  * Every tool is declared with a `ToolDefinition`. The router classifies each
  * call by its category:
  *  - `api`          -> runs natively in the Worker (`adapters/local.ts`)
- *  - `shell|python|file` -> forwarded to the E2B sandbox (`adapters/e2b.ts`)
+ *  - `shell|python|file` -> forwarded to the Hugging Face free sandbox
+ *                           (`adapters/hfSandbox.ts`) over HTTP
  * @module serverless-worker/engine/router
  */
 
 import { executeLocalTool } from '../adapters/local.ts'
+import { executeHfTool } from '../adapters/hfSandbox.ts'
 import type { ToolCall, ToolDefinition, ToolResult } from '../types/tools.ts'
 import type { Env } from '../types/env.ts'
 
@@ -37,7 +39,7 @@ const REGISTRY: readonly ToolDefinition[] = [
   {
     name: 'bash',
     category: 'shell',
-    description: 'Run a Bash command inside the E2B sandbox and return stdout/stderr.',
+    description: 'Run a Bash command inside the sandbox and return stdout/stderr.',
     inputSchema: {
       type: 'object',
       properties: { command: { type: 'string', description: 'The Bash command to execute.' } },
@@ -48,7 +50,7 @@ const REGISTRY: readonly ToolDefinition[] = [
   {
     name: 'python',
     category: 'python',
-    description: 'Run a Python 3 script inside the E2B sandbox and return stdout/stderr.',
+    description: 'Run a Python 3 script inside the sandbox and return stdout/stderr.',
     inputSchema: {
       type: 'object',
       properties: { source: { type: 'string', description: 'The Python source code to run.' } },
@@ -59,7 +61,7 @@ const REGISTRY: readonly ToolDefinition[] = [
   {
     name: 'list_files',
     category: 'file',
-    description: 'List entries in a directory inside the E2B sandbox.',
+    description: 'List entries in a directory inside the sandbox.',
     inputSchema: {
       type: 'object',
       properties: { path: { type: 'string', description: 'Directory path; defaults to the session cwd.' } },
@@ -69,7 +71,7 @@ const REGISTRY: readonly ToolDefinition[] = [
   {
     name: 'read_file',
     category: 'file',
-    description: 'Read a text file from inside the E2B sandbox.',
+    description: 'Read a text file from inside the sandbox.',
     inputSchema: {
       type: 'object',
       properties: { path: { type: 'string', description: 'Absolute or session-cwd-relative file path.' } },
@@ -103,26 +105,30 @@ export function llmFunctionDeclarations(definitions: readonly ToolDefinition[]):
   }))
 }
 
+/** The sandbox working directory for a session (isolated per session id). */
+function sandboxCwd(sessionId: string): string {
+  return `/workspace/${sessionId}`
+}
+
 /** Dispatch a single tool call to its adapter and return a result. */
 export async function dispatchTool(
   call: ToolCall,
   definitions: readonly ToolDefinition[],
   sessionId: string,
   env: Env,
-  sandboxPool: import('../adapters/e2b.ts').E2BSandboxPool,
 ): Promise<ToolResult> {
   const definition = definitions.find(candidate => candidate.name === call.name)
   if (definition === undefined) {
     return { ok: false, output: `tool "${call.name}" is not registered`, detail: null, error: 'not registered' }
   }
-  const ctx = { sessionId, cwd: `/home/user/workspace/${sessionId}` }
+  const ctx = { sessionId, cwd: sandboxCwd(sessionId) }
   switch (definition.category) {
     case 'api':
       return executeLocalTool(call)
     case 'shell':
     case 'python':
     case 'file':
-      return (await import('../adapters/e2b.ts')).executeE2BTool(call, ctx, env, sandboxPool)
+      return executeHfTool(call, ctx, env)
     default:
       return { ok: false, output: `tool "${call.name}" has unknown category`, detail: null, error: 'unknown category' }
   }
